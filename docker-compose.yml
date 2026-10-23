@@ -1,0 +1,35 @@
+name: finguard-rag
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: finguard-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: finguard
+      POSTGRES_USER: finguard
+      POSTGRES_PASSWORD: finguard_dev
+      TZ: Asia/Shanghai
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finguard -d finguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: finguard-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

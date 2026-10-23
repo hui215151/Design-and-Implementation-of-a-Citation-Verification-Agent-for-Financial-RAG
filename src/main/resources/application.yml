@@ -1,0 +1,68 @@
+server:
+  port: 8080
+  tomcat:
+    max-swallow-size: -1
+    uri-encoding: UTF-8
+
+spring:
+  application:
+    name: finguard-rag
+
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+  # ── H2 嵌入式数据库（开发阶段，零配置）──
+  datasource:
+    url: jdbc:h2:file:./data/finguard;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2
+
+  # 强制启动时执行 schema.sql
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+  # 上传文件大小
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+# ── MyBatis-Plus ──
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+# ── LLM 配置 ──
+llm:
+  provider: deepseek
+  base-url: ${LLM_BASE_URL:https://api.deepseek.com}
+  api-key: ${LLM_API_KEY:sk-bdf0fba2538d4c8c8dd6087e95445ade}
+  cheap-model: deepseek-chat
+  main-model: deepseek-chat
+  premium-model: deepseek-reasoner
+  timeout-ms: 60000
+
+# ── Embedding 配置（智谱 AI）──
+embedding:
+  base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+  api-key: ${ZHIPU_API_KEY:3510ab7d50e74dc2a49ba1764501fea6.xCR1Jq7fz1RdGJRl}
+  model: embedding-3
+  dimension: 1024
+
+logging:
+  level:
+    com.finguard: INFO

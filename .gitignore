@@ -1,0 +1,29 @@
+# ── Java / Maven 编译产物 ──
+target/
+*.class
+*.jar
+*.war
+
+# ── IDE ──
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+
+# ── H2 数据库（不要把本地数据库推到 GitHub）──
+data/
+*.db
+*.trace.db
+
+# ── 系统文件 ──
+.DS_Store
+Thumbs.db
+
+# ── 日志 ──
+*.log
+
+# ── 环境变量 ──
+.env
+.env.local
