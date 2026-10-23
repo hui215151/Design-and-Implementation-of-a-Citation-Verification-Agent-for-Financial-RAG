@@ -38,6 +38,32 @@
         .input-area { padding: 16px; background: white; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; }
         .input-area input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
         .input-area button { padding: 12px 24px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        .upload-section { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e0e0e0; }
+        .upload-section input[type="file"] { display: none; }
+        .upload-section label { display: block; width: 100%; padding: 8px; background: #34a853; color: white; border-radius: 4px; cursor: pointer; text-align: center; font-size: 13px; }
+        .upload-section label:hover { background: #2d9348; }
+        .upload-status { font-size: 11px; color: #666; margin-top: 6px; }
+        .upload-status.error { color: #ea4335; }
+        .upload-status.success { color: #34a853; }
+        .doc-list { margin-top: 8px; max-height: 120px; overflow-y: auto; }
+        .doc-item { padding: 6px 8px; font-size: 12px; border-radius: 4px; margin-bottom: 4px; background: #f8f9fa; display: flex; justify-content: space-between; align-items: center; }
+        .doc-item .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-item .doc-status { font-size: 10px; margin-left: 6px; }
+        .doc-item .doc-status.ready { color: #34a853; }
+        .doc-item .doc-status.processing { color: #f9ab00; }
+        .mode-bar { padding: 8px 24px; background: #fafbfc; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+        .mode-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+        .mode-bar .mode-hint { color: #999; font-size: 11px; }
+        .trace-box { margin-top: 12px; border: 1px solid #d2e3fc; border-radius: 8px; overflow: hidden; background: #f8faff; }
+        .trace-header { padding: 8px 12px; font-size: 12px; color: #1a73e8; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: #e8f0fe; font-weight: 500; }
+        .trace-box.collapsed .trace-body { display: none; }
+        .trace-body { padding: 4px 12px; }
+        .trace-step { padding: 8px 0; border-bottom: 1px dashed #dbe4f0; font-size: 12px; }
+        .trace-step:last-child { border-bottom: none; }
+        .trace-round { display: inline-block; background: #1a73e8; color: white; border-radius: 3px; padding: 1px 6px; margin-right: 6px; font-size: 10px; }
+        .trace-tool { font-weight: 600; color: #333; margin-right: 6px; }
+        .trace-cost { color: #34a853; font-size: 11px; }
+        .trace-args, .trace-result { color: #666; font-size: 11px; margin-top: 4px; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -47,6 +73,12 @@
     </div>
     <div class="main">
         <div class="sidebar">
+            <div class="upload-section">
+                <label for="fileInput">📄 上传文档</label>
+                <input type="file" id="fileInput" accept=".pdf,.txt,.md" multiple onchange="uploadDocument(this)">
+                <div class="upload-status" id="uploadStatus" style="display:none;"></div>
+                <div class="doc-list" id="docList"></div>
+            </div>
             <button onclick="newConversation()">+ 新建对话</button>
             <div class="conv-list" id="convList">
                 <!-- 历史对话会被 JS 动态渲染在这里 -->
@@ -54,6 +86,13 @@
             </div>
         </div>
         <div class="chat-area">
+            <div class="mode-bar">
+                <label>
+                    <input type="checkbox" id="agentMode">
+                    <span>🤖 Agent 模式（工具调用）</span>
+                </label>
+                <span class="mode-hint">关闭时为固定流水线模式（流式输出）；开启后由模型自主决定检索与自检</span>
+            </div>
             <div class="messages" id="messages">
                 <div style="text-align:center;color:#999;padding:40px;">
                     👋 你好，我是金融问答助手。<br>
@@ -71,10 +110,64 @@
     <script>
         let currentConvId = null;
 
-        // 页面加载时：拉历史对话列表 + 默认打开第一个
+        // 页面加载时：拉历史对话列表 + 文档列表
         document.addEventListener('DOMContentLoaded', async () => {
             await loadConversations();
+            await loadDocuments();
         });
+
+        /**
+         * 上传文档（支持多文件）
+         */
+        async function uploadDocument(input) {
+            const files = input.files;
+            if (!files || files.length === 0) return;
+
+            const status = document.getElementById('uploadStatus');
+            status.style.display = 'block';
+            status.className = 'upload-status';
+            status.textContent = `上传中 0/${files.length}...`;
+
+            let done = 0;
+            for (let file of files) {
+                const formData = new FormData();
+                formData.append('file', file);
+                try {
+                    const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+                    const doc = await res.json();
+                    done++;
+                    status.className = 'upload-status success';
+                    status.textContent = `✓ ${file.name} 上传成功（${doc.chunkCount} 块）${done < files.length ? `，继续 ${done}/${files.length}` : ''}`;
+                } catch (e) {
+                    done++;
+                    status.className = 'upload-status error';
+                    status.textContent = `✗ ${file.name} 上传失败：${e.message} (${done}/${files.length})`;
+                }
+            }
+            input.value = '';  // 清空文件选择
+            await loadDocuments();  // 刷新文档列表
+        }
+
+        /**
+         * 拉取已上传文档列表
+         */
+        async function loadDocuments() {
+            const res = await fetch('/api/documents');
+            const docs = await res.json();
+            const list = document.getElementById('docList');
+            if (docs.length === 0) {
+                list.innerHTML = '';
+                return;
+            }
+            list.innerHTML = docs.map(d => `
+                <div class="doc-item">
+                    <span class="doc-name" title="${d.fileName}">${d.fileName}</span>
+                    <span class="doc-status ${d.status === 'READY' ? 'ready' : 'processing'}">
+                        ${d.status === 'READY' ? '✓' : '⏳'} ${d.chunkCount || 0}块
+                    </span>
+                </div>
+            `).join('');
+        }
 
         /**
          * 拉取所有历史对话 → 渲染侧边栏列表
@@ -159,7 +252,10 @@
             if (!q) return;
             input.value = '';
 
-            if (!currentConvId) {
+            const isAgent = document.getElementById('agentMode').checked;
+
+            // Agent 模式是无状态问答，不需要绑定会话
+            if (!isAgent && !currentConvId) {
                 await newConversation();
             }
 
@@ -169,26 +265,102 @@
             // 先插一个空的 assistant 消息容器，后面逐字填充
             const assistantDiv = addMessage('assistant', '');
 
-            // 开流式连接
+            if (isAgent) {
+                await askAgent(q, assistantDiv);
+            } else {
+                askPipeline(q, assistantDiv);
+            }
+        }
+
+        /**
+         * 固定流水线模式：SSE 逐 token 输出 → verify 事件 → done
+         */
+        function askPipeline(q, assistantDiv) {
+            // 确保有文本节点可追加，避免首 token 时 firstChild 为 null
+            if (!assistantDiv.firstChild) {
+                assistantDiv.appendChild(document.createTextNode(''));
+            }
+
             const es = new EventSource(`/api/conversation/${currentConvId}/ask/stream?question=${encodeURIComponent(q)}`);
 
-            // 逐 token 追加（打字机效果）
             es.addEventListener('token', e => {
                 assistantDiv.firstChild.textContent += e.data;
                 document.getElementById('messages').scrollTop = 99999;
             });
 
-            // LLM 答完，推送校验结果
             es.addEventListener('verify', e => {
                 const verifications = JSON.parse(e.data);
                 renderVerifications(assistantDiv, verifications);
             });
 
-            // 全部结束，关闭连接
             es.addEventListener('done', () => es.close());
-
-            // 出错也关闭
             es.onerror = () => es.close();
+        }
+
+        /**
+         * Agent 模式：一次请求返回完整结果，渲染答案 + 工具轨迹 + 校验
+         */
+        async function askAgent(q, assistantDiv) {
+            assistantDiv.innerHTML = '<span style="color:#999;">🤖 Agent 正在思考（自主调用工具）...</span>';
+            try {
+                const res = await fetch('/api/agent/ask', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json; charset=utf-8'},
+                    body: JSON.stringify({question: q})
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+
+                const data = await res.json();
+                assistantDiv.textContent = data.answer || '（无回答）';
+                renderTrace(assistantDiv, data.trace);
+                renderVerifications(assistantDiv, data.verifications);
+            } catch (e) {
+                assistantDiv.textContent = '⚠️ Agent 调用失败：' + e.message;
+            }
+            document.getElementById('messages').scrollTop = 99999;
+        }
+
+        /**
+         * 渲染 Agent 执行轨迹（可折叠时间线）
+         */
+        function renderTrace(assistantDiv, trace) {
+            if (!trace || trace.length === 0) return;
+
+            const box = document.createElement('div');
+            box.className = 'trace-box';
+
+            const header = document.createElement('div');
+            header.className = 'trace-header';
+            header.innerHTML = `<span>🤖 Agent 执行轨迹（${trace.length} 步）</span><span>▾</span>`;
+            header.onclick = () => box.classList.toggle('collapsed');
+
+            const body = document.createElement('div');
+            body.className = 'trace-body';
+
+            trace.forEach(step => {
+                const item = document.createElement('div');
+                item.className = 'trace-step';
+                item.innerHTML = `
+                    <div>
+                        <span class="trace-round">R${step.round}</span>
+                        <span class="trace-tool">${escapeHtml(step.tool)}</span>
+                        <span class="trace-cost">${step.costMs}ms</span>
+                    </div>
+                    <div class="trace-args">参数：${escapeHtml(JSON.stringify(step.args || {}))}</div>
+                    <div class="trace-result">结果：${escapeHtml(step.resultPreview || '')}</div>
+                `;
+                body.appendChild(item);
+            });
+
+            box.appendChild(header);
+            box.appendChild(body);
+            assistantDiv.appendChild(box);
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
         }
 
         function addMessage(role, text) {
