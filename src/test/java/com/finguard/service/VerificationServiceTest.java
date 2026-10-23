@@ -73,6 +73,17 @@ class VerificationServiceTest {
         assertTrue(claims.isEmpty());
     }
 
+    @Test
+    void splitClaims_trailingPunctuationIgnored() {
+        // 回答末尾的句号不应被当成一条主张，否则会产出「无支撑 · 没有标注引用来源」的噪音
+        String answer = "基金代码005827[资料1]。";
+        List<VerificationService.Claim> claims = service.splitClaims(answer);
+
+        assertEquals(1, claims.size());
+        assertEquals("基金代码005827", claims.get(0).text);
+        assertEquals("[资料1]", claims.get(0).ref);
+    }
+
     // ────────────── findEvidence ──────────────
 
     @Test

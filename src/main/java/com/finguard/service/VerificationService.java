@@ -81,6 +81,8 @@ public class VerificationService {
         for (int i = 0; i < parts.length; i++) {
             String text = parts[i].trim();
             if (text.isEmpty()) continue;
+            // 纯标点片段（如回答末尾的句号、换行）不构成主张，跳过，避免产生无意义的「无支撑」条目
+            if (text.replaceAll("[\\p{P}\\p{Z}\\s]", "").isEmpty()) continue;
             String ref = i < refs.size() ? refs.get(i) : null;
             claims.add(new Claim(text, ref));
         }
