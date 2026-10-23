@@ -61,7 +61,7 @@ public class SearchService {
     /**
      * 余弦相似度计算
      */
-    private double cosineSimilarity(List<Double> a, List<Double> b) {
+    double cosineSimilarity(List<Double> a, List<Double> b) {
         double dot = 0, normA = 0, normB = 0;
         for (int i = 0; i < a.size(); i++) {
             dot += a.get(i) * b.get(i);

@@ -7,7 +7,9 @@ import com.finguard.mapper.*;
 import com.finguard.llm.LlmClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -106,20 +108,24 @@ public class ConversationService {
         assistantMsg.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(assistantMsg);
 
-        // 6. 校验
-        List<Map<String, Object>> verifications = verificationService.verify(answer, chunks);
+        // 6. 校验（VerificationService 只返回实体，不存库）
+        List<VerificationResult> results = verificationService.verify(answer, chunks);
 
-        // 7. 把校验结果和 message_id 关联
-        for (Map<String, Object> v : verifications) {
-            if (v.get("evidenceChunkId") != null) {
-                VerificationResult vr = new VerificationResult();
-                vr.setMessageId(assistantMsg.getId());
-                vr.setClaimText((String) v.get("claim"));
-                vr.setVerdict((String) v.get("verdict"));
-                vr.setEvidenceChunkId((Long) v.get("evidenceChunkId"));
-                vr.setReason((String) v.get("reason"));
-                verificationResultMapper.insert(vr);
-            }
+        // 7. 统一关联 messageId 后存库（唯一一次 insert）
+        for (VerificationResult vr : results) {
+            vr.setMessageId(assistantMsg.getId());
+            verificationResultMapper.insert(vr);
+        }
+
+        // 8. 把实体转成前端需要的 Map 格式
+        List<Map<String, Object>> verifications = new ArrayList<>();
+        for (VerificationResult vr : results) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("claim", vr.getClaimText());
+            map.put("verdict", vr.getVerdict());
+            map.put("reason", vr.getReason());
+            map.put("evidenceChunkId", vr.getEvidenceChunkId());
+            verifications.add(map);
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -136,5 +142,85 @@ public class ConversationService {
         return messageMapper.selectList(
                 new QueryWrapper<Message>().eq("conversation_id", conversationId).orderByAsc("id")
         );
+    }
+
+    /**
+     * 流式问答（SSE 打字机效果，带存库）
+     * 流程：
+     * 1. 存用户消息
+     * 2. 逐 token 推文本给前端，同时攒完整回答
+     * 3. LLM 答完 → 存助手消息 + 做校验 + 存校验结果
+     * 4. 推校验结果 + done
+     */
+    public void askStream(Long conversationId, String question, SseEmitter emitter) {
+        try {
+            // 1. 检索
+            List<Chunk> chunks = searchService.search(question, 3);
+
+            // 2. 保存用户消息
+            Message userMsg = new Message();
+            userMsg.setConversationId(conversationId);
+            userMsg.setRole("user");
+            userMsg.setContent(question);
+            userMsg.setCreatedAt(LocalDateTime.now());
+            messageMapper.insert(userMsg);
+
+            if (chunks.isEmpty()) {
+                emitter.send(SseEmitter.event().name("token").data("我没有找到相关资料，无法回答这个问题。"));
+                emitter.send(SseEmitter.event().name("done").data(""));
+                emitter.complete();
+                return;
+            }
+
+            // 3. 拼 prompt（和阻塞式一样）
+            StringBuilder context = new StringBuilder();
+            for (int i = 0; i < chunks.size(); i++) {
+                Chunk c = chunks.get(i);
+                context.append("[资料").append(i + 1).append("]").append(c.getContent()).append("\n\n");
+            }
+
+            String systemPrompt = "你是一个金融问答助手。请严格根据下面提供的资料回答用户问题。" +
+                    "规则：1.只能用资料里的信息 2.每句话后面标引用[资料N] 3.资料没有就说无法回答 4.不要编造数字";
+            String userMessage = "资料：\n" + context + "\n问题：" + question;
+
+            // 4. 流式生成，同时攒完整回答
+            StringBuilder fullAnswer = new StringBuilder();
+            llmClient.chatStream(systemPrompt, userMessage, token -> {
+                fullAnswer.append(token);
+                try {
+                    emitter.send(SseEmitter.event().name("token").data(token));
+                } catch (IOException ignored) {}
+            });
+
+            // 5. 保存助手消息
+            Message assistantMsg = new Message();
+            assistantMsg.setConversationId(conversationId);
+            assistantMsg.setRole("assistant");
+            assistantMsg.setContent(fullAnswer.toString());
+            assistantMsg.setCreatedAt(LocalDateTime.now());
+            messageMapper.insert(assistantMsg);
+
+            // 6. 校验 + 存库（唯一一次 insert，统一关联 messageId）
+            List<VerificationResult> results = verificationService.verify(fullAnswer.toString(), chunks);
+            for (VerificationResult vr : results) {
+                vr.setMessageId(assistantMsg.getId());
+                verificationResultMapper.insert(vr);
+            }
+
+            // 7. 把校验结果转前端格式推过去
+            List<Map<String, Object>> verifications = new ArrayList<>();
+            for (VerificationResult vr : results) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("claim", vr.getClaimText());
+                map.put("verdict", vr.getVerdict());
+                map.put("reason", vr.getReason());
+                verifications.add(map);
+            }
+            emitter.send(SseEmitter.event().name("verify").data(verifications));
+            emitter.send(SseEmitter.event().name("done").data(""));
+            emitter.complete();
+        } catch (Exception e) {
+            emitter.completeWithError(e);
+        }
     }
 }

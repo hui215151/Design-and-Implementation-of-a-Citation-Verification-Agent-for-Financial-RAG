@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finguard.entity.Chunk;
 import com.finguard.entity.VerificationResult;
-import com.finguard.mapper.VerificationResultMapper;
 import com.finguard.llm.LlmClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,28 +13,29 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 引用校验服务：把 LLM 的回答拆成主张，逐条和证据对比
+ * 引用校验服务：纯算法，只返回校验结果实体，不存库
+ * 存库的事交给调用方（ConversationService / ChatService）
  */
 @Service
 @RequiredArgsConstructor
 public class VerificationService {
 
     private final LlmClient llmClient;
-    private final VerificationResultMapper verificationResultMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * 校验主入口
+     * 只做校验算法，不存库。调用方拿到返回的实体列表后自行决定怎么处理。
      * @param answer LLM 的回答
      * @param chunks  检索到的证据 chunk 列表（按 [资料1] [资料2] 顺序）
-     * @return 每条主张的校验结果列表
+     * @return 每条主张的校验结果实体列表
      */
-    public List<Map<String, Object>> verify(String answer, List<Chunk> chunks) {
+    public List<VerificationResult> verify(String answer, List<Chunk> chunks) {
         // 1. 把回答拆成一条条主张（按句子拆，带上引用编号）
         List<Claim> claims = splitClaims(answer);
 
         // 2. 逐条校验
-        List<Map<String, Object>> results = new ArrayList<>();
+        List<VerificationResult> results = new ArrayList<>();
         for (Claim claim : claims) {
             // 找到对应的证据 chunk
             Chunk evidence = findEvidence(claim, chunks);
@@ -66,7 +66,7 @@ public class VerificationService {
      * 把回答拆成主张
      * 格式："xxx[资料1] yyy[资料2]" → 拆成两条
      */
-    private List<Claim> splitClaims(String answer) {
+    List<Claim> splitClaims(String answer) {
         List<Claim> claims = new ArrayList<>();
         // 按 [资料N] 分割，每一段对应一条主张
         Pattern pattern = Pattern.compile("(\\[[^\\]]+\\])");
@@ -90,7 +90,7 @@ public class VerificationService {
     /**
      * 根据 [资料N] 找到对应的证据 chunk
      */
-    private Chunk findEvidence(Claim claim, List<Chunk> chunks) {
+    Chunk findEvidence(Claim claim, List<Chunk> chunks) {
         if (claim.ref == null) return null;
         // [资料1] → 第 0 个 chunk
         Matcher m = Pattern.compile("资料(\\d+)").matcher(claim.ref);
@@ -106,7 +106,7 @@ public class VerificationService {
     /**
      * 数字硬比对：提取文本里的所有数字，看有没有对不上的
      */
-    private String checkNumbers(String claimText, String evidenceText) {
+    String checkNumbers(String claimText, String evidenceText) {
         // 提取所有数字（带百分号、金额、日期）
         Pattern numPattern = Pattern.compile("\\d+\\.?\\d*%?|\\d+亿|\\d+万|\\d{4}年\\d{1,2}月?");
         Set<String> claimNums = new HashSet<>();
@@ -166,30 +166,24 @@ public class VerificationService {
         return llmClient.chat("你是事实核查助手", prompt).trim();
     }
 
-    private Map<String, Object> buildResult(Claim claim, Chunk evidence, String verdict, String reason) {
-        Map<String, Object> map = new HashMap<>();
-        map.put("claim", claim.text);
-        map.put("ref", claim.ref);
-        map.put("verdict", verdict);
-        map.put("reason", reason);
-        map.put("evidenceChunkId", evidence != null ? evidence.getId() : null);
-
-        // 存库
+    /**
+     * 纯构造方法：只组装 VerificationResult 实体，不存库
+     * 存库由调用方负责（ConversationService 有 messageId，ChatService 不存）
+     */
+    VerificationResult buildResult(Claim claim, Chunk evidence, String verdict, String reason) {
         VerificationResult vr = new VerificationResult();
         vr.setClaimText(claim.text);
         vr.setVerdict(verdict);
         vr.setEvidenceChunkId(evidence != null ? evidence.getId() : null);
         vr.setEvidenceSnippet(evidence != null ? evidence.getContent().substring(0, Math.min(200, evidence.getContent().length())) : null);
         vr.setReason(reason);
-        verificationResultMapper.insert(vr);
-
-        return map;
+        return vr;
     }
 
     /**
      * 内部类：一条主张
      */
-    private static class Claim {
+    static class Claim {
         String text;
         String ref; // [资料1]
 

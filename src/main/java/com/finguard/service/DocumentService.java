@@ -80,7 +80,7 @@ public class DocumentService {
     /**
      * 文本切片：按 500 字切，重叠 100 字
      */
-    private List<String> splitText(String text) {
+    List<String> splitText(String text) {
         List<String> result = new ArrayList<>();
         int start = 0;
         int len = text.length();

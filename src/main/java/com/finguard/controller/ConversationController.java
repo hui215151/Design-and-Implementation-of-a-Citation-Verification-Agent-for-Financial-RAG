@@ -4,7 +4,9 @@ import com.finguard.entity.Conversation;
 import com.finguard.entity.Message;
 import com.finguard.service.ConversationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -45,12 +47,22 @@ public class ConversationController {
     }
 
     /**
-     * 问答（带校验）
+     * 问答（带校验，阻塞式）
      */
     @PostMapping("/{id}/ask")
     public Map<String, Object> ask(@PathVariable Long id, @RequestBody Map<String, String> body) {
         String question = body.get("question");
         return conversationService.ask(id, question);
+    }
+
+    /**
+     * 流式问答（带校验 + 存库，SSE 打字机效果）
+     */
+    @GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter askStream(@PathVariable Long id, @RequestParam String question) {
+        SseEmitter emitter = new SseEmitter(60000L);
+        conversationService.askStream(id, question, emitter);
+        return emitter;
     }
 
     /**

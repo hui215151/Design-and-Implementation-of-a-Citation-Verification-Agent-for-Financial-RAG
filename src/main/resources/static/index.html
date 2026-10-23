@@ -75,6 +75,12 @@
             document.getElementById('messages').innerHTML = '';
         }
 
+        /**
+         * 流式问答：用 EventSource 接收 SSE 事件
+         * token 事件 → 逐字追加（打字机效果）
+         * verify 事件 → 渲染校验面板
+         * done 事件 → 关闭连接
+         */
         async function ask() {
             const input = document.getElementById('question');
             const q = input.value.trim();
@@ -88,48 +94,62 @@
             // 显示用户消息
             addMessage('user', q);
 
-            // 调接口
-            const res = await fetch(`/api/conversation/${currentConvId}/ask`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({question: q})
-            });
-            const data = await res.json();
+            // 先插一个空的 assistant 消息容器，后面逐字填充
+            const assistantDiv = addMessage('assistant', '');
 
-            // 显示回答 + 校验
-            addMessage('assistant', data.answer, data.verifications || []);
+            // 开流式连接
+            const es = new EventSource(`/api/conversation/${currentConvId}/ask/stream?question=${encodeURIComponent(q)}`);
+
+            // 逐 token 追加（打字机效果）
+            es.addEventListener('token', e => {
+                assistantDiv.firstChild.textContent += e.data;
+                document.getElementById('messages').scrollTop = 99999;
+            });
+
+            // LLM 答完，推送校验结果
+            es.addEventListener('verify', e => {
+                const verifications = JSON.parse(e.data);
+                renderVerifications(assistantDiv, verifications);
+            });
+
+            // 全部结束，关闭连接
+            es.addEventListener('done', () => es.close());
+
+            // 出错也关闭
+            es.onerror = () => es.close();
         }
 
-        function addMessage(role, text, verifications) {
+        function addMessage(role, text) {
             const div = document.createElement('div');
             div.className = 'msg msg-' + role;
             div.textContent = text;
-
-            if (role === 'assistant' && verifications && verifications.length > 0) {
-                const vDiv = document.createElement('div');
-                vDiv.className = 'verification';
-                vDiv.innerHTML = '<h4>📋 引用校验结果</h4>';
-
-                verifications.forEach(v => {
-                    const claimDiv = document.createElement('div');
-                    claimDiv.className = 'claim ' + (v.verdict || '').toLowerCase();
-                    const verdictText = {
-                        'SUPPORTED': '✅ 有支撑',
-                        'PARTIAL': '⚠️ 部分支撑',
-                        'UNSUPPORTED': '❌ 无支撑',
-                        'CONTRADICTED': '🚫 矛盾'
-                    }[v.verdict] || v.verdict;
-                    claimDiv.innerHTML = `
-                        <div><span class="verdict">${verdictText}</span>${v.claim}</div>
-                        <div class="reason">${v.reason || ''}</div>
-                    `;
-                    vDiv.appendChild(claimDiv);
-                });
-                div.appendChild(vDiv);
-            }
-
             document.getElementById('messages').appendChild(div);
             document.getElementById('messages').scrollTop = 99999;
+            return div;
+        }
+
+        function renderVerifications(assistantDiv, verifications) {
+            if (!verifications || verifications.length === 0) return;
+            const vDiv = document.createElement('div');
+            vDiv.className = 'verification';
+            vDiv.innerHTML = '<h4>📋 引用校验结果</h4>';
+
+            verifications.forEach(v => {
+                const claimDiv = document.createElement('div');
+                claimDiv.className = 'claim ' + (v.verdict || '').toLowerCase();
+                const verdictText = {
+                    'SUPPORTED': '✅ 有支撑',
+                    'PARTIAL': '⚠️ 部分支撑',
+                    'UNSUPPORTED': '❌ 无支撑',
+                    'CONTRADICTED': '🚫 矛盾'
+                }[v.verdict] || v.verdict;
+                claimDiv.innerHTML = `
+                    <div><span class="verdict">${verdictText}</span>${v.claim}</div>
+                    <div class="reason">${v.reason || ''}</div>
+                `;
+                vDiv.appendChild(claimDiv);
+            });
+            assistantDiv.appendChild(vDiv);
         }
     </script>
 </body>

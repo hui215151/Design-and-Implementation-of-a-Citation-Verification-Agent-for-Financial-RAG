@@ -1,10 +1,13 @@
 package com.finguard.service;
 
 import com.finguard.entity.Chunk;
+import com.finguard.entity.VerificationResult;
 import com.finguard.llm.LlmClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.*;
 
 /**
@@ -61,8 +64,17 @@ public class ChatService {
         // 4. 调 LLM
         String answer = llmClient.chat(systemPrompt, userMessage);
 
-        // 5. ★ 引用校验：把回答拆成主张，逐条和证据对比
-        List<Map<String, Object>> verifications = verificationService.verify(answer, chunks);
+        // 5. ★ 引用校验：VerificationService 只返回实体，不存库（ChatService 是无状态问答，不存库）
+        List<VerificationResult> results = verificationService.verify(answer, chunks);
+        List<Map<String, Object>> verifications = new ArrayList<>();
+        for (VerificationResult vr : results) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("claim", vr.getClaimText());
+            map.put("verdict", vr.getVerdict());
+            map.put("reason", vr.getReason());
+            map.put("evidenceChunkId", vr.getEvidenceChunkId());
+            verifications.add(map);
+        }
 
         // 6. 返回回答 + 引用 + 校验结果
         Map<String, Object> result = new HashMap<>();
@@ -70,5 +82,62 @@ public class ChatService {
         result.put("citations", citations);
         result.put("verifications", verifications);
         return result;
+    }
+
+    /**
+     * 流式问答（SSE 打字机效果）
+     * 流程：逐 token 推文本 → LLM 答完后统一做校验 → 推校验结果 → done
+     */
+    public void askStream(String question, SseEmitter emitter) {
+        try {
+            List<Chunk> chunks = searchService.search(question, 3);
+
+            if (chunks.isEmpty()) {
+                emitter.send(SseEmitter.event().name("token").data("我没有找到相关资料，无法回答这个问题。"));
+                emitter.send(SseEmitter.event().name("done").data(""));
+                emitter.complete();
+                return;
+            }
+
+            // 拼 prompt（和阻塞式一样）
+            StringBuilder context = new StringBuilder();
+            for (int i = 0; i < chunks.size(); i++) {
+                Chunk c = chunks.get(i);
+                context.append("[资料").append(i + 1).append("]").append(c.getContent()).append("\n\n");
+            }
+
+            String systemPrompt = "你是一个金融问答助手。请严格根据下面提供的资料回答用户问题。" +
+                    "规则：\n" +
+                    "1. 只能使用资料里的信息，不要编造\n" +
+                    "2. 每句话后面必须标注引用编号，如 [资料1]\n" +
+                    "3. 如果资料里没有答案，直接说'根据现有资料无法回答'\n" +
+                    "4. 不要输出资料里没有的数字、日期、人名";
+            String userMessage = "资料：\n" + context + "\n问题：" + question;
+
+            // 流式生成：边生成边推给前端，同时攒完整回答用于后续校验
+            StringBuilder fullAnswer = new StringBuilder();
+            llmClient.chatStream(systemPrompt, userMessage, token -> {
+                fullAnswer.append(token);
+                try {
+                    emitter.send(SseEmitter.event().name("token").data(token));
+                } catch (IOException ignored) {}
+            });
+
+            // LLM 答完 → 做校验
+            List<VerificationResult> results = verificationService.verify(fullAnswer.toString(), chunks);
+            List<Map<String, Object>> verifications = new ArrayList<>();
+            for (VerificationResult vr : results) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("claim", vr.getClaimText());
+                map.put("verdict", vr.getVerdict());
+                map.put("reason", vr.getReason());
+                verifications.add(map);
+            }
+            emitter.send(SseEmitter.event().name("verify").data(verifications));
+            emitter.send(SseEmitter.event().name("done").data(""));
+            emitter.complete();
+        } catch (Exception e) {
+            emitter.completeWithError(e);
+        }
     }
 }
