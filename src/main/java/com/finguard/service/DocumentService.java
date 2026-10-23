@@ -26,6 +26,7 @@ public class DocumentService {
     private final DocumentMapper documentMapper;
     private final ChunkMapper chunkMapper;
     private final EmbeddingService embeddingService;
+    private final SearchService searchService;  // 用于上传/删除后清 embedding 缓存
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 切片大小：500 字 */
@@ -69,7 +70,10 @@ public class DocumentService {
             chunkMapper.insert(chunk);
         }
 
-        // 5. 更新文档状态
+        // 5. 清 embedding 缓存（新 chunk 需要下次 search 能被检索到）
+        searchService.invalidateCache();
+
+        // 6. 更新文档状态
         doc.setStatus("READY");
         doc.setChunkCount(chunks.size());
         documentMapper.updateById(doc);
@@ -164,5 +168,8 @@ public class DocumentService {
 
         // 删文档记录本身
         documentMapper.deleteById(id);
+
+        // 清 embedding 缓存（chunk 被删了，缓存里的旧 chunkId 得清掉）
+        searchService.invalidateCache();
     }
 }

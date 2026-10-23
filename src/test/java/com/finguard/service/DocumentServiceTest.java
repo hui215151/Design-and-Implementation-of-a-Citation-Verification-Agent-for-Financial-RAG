@@ -24,16 +24,22 @@ class DocumentServiceTest {
     @Mock
     private ChunkMapper chunkMapper;
 
+    @Mock
+    private EmbeddingService embeddingService;
+
+    @Mock
+    private SearchService searchService;   // 新增：用于 invalidateCache 调用
+
     @Test
     void splitText_emptyString_returnsEmpty() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         List<String> chunks = service.splitText("");
         assertTrue(chunks.isEmpty());
     }
 
     @Test
     void splitText_shortText_singleChunk() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         List<String> chunks = service.splitText("hello world");
         assertEquals(1, chunks.size());
         assertEquals("hello world", chunks.get(0));
@@ -41,7 +47,7 @@ class DocumentServiceTest {
 
     @Test
     void splitText_exactChunkSize_twoChunks() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         // 500 字 → start=0[0,500] + start=400[400,500] → 2 块
         String text = "a".repeat(500);
         List<String> chunks = service.splitText(text);
@@ -53,7 +59,7 @@ class DocumentServiceTest {
 
     @Test
     void splitText_twoChunks_overlapWorks() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         // 1000 字 → start=0[0,500], start=400[400,900], start=800[800,1000] → 3 块
         String text = "a".repeat(1000);
         List<String> chunks = service.splitText(text);
@@ -66,7 +72,7 @@ class DocumentServiceTest {
 
     @Test
     void splitText_threeChunks_correctSizes() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         // 1500 字 → 4 块：[0,500], [400,900], [800,1300], [1200,1500]
         String text = "a".repeat(1500);
         List<String> chunks = service.splitText(text);
@@ -80,7 +86,7 @@ class DocumentServiceTest {
 
     @Test
     void splitText_partialFinalChunk() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         // 700 字 → chunk1[0,500], chunk2[400,700]
         String text = "a".repeat(700);
         List<String> chunks = service.splitText(text);
@@ -92,7 +98,7 @@ class DocumentServiceTest {
 
     @Test
     void splitText_noGap_betweenChunks() {
-        DocumentService service = new DocumentService(documentMapper, chunkMapper, null);
+        DocumentService service = new DocumentService(documentMapper, chunkMapper, embeddingService, searchService);
         // 验证相邻 chunk 有重叠（chunk1 的后 100 字 == chunk2 的前 100 字）
         String text = "abcdefghij".repeat(200);   // 2000 字
         List<String> chunks = service.splitText(text);

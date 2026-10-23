@@ -56,12 +56,12 @@ class SearchServiceTest {
     }
 
     @Test
-    void cosineSimilarity_zeroVector_returnsNaN() {
+    void cosineSimilarity_zeroVector_returnsZero() {
         SearchService search = new SearchService(chunkMapper, null);
         List<Double> a = List.of(0.0, 0.0, 0.0);
         List<Double> b = List.of(1.0, 2.0, 3.0);
-        // 零向量 norm 为 0 → 分母为 0 → NaN
-        assertTrue(Double.isNaN(search.cosineSimilarity(a, b)));
+        // 零向量 norm 为 0 → 分母为 0 → 返回 0.0（防御性处理，避免除零错误）
+        assertEquals(0.0, search.cosineSimilarity(a, b), 0.0001);
     }
 
     @Test
