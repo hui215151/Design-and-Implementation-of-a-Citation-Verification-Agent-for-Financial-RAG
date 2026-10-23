@@ -10,8 +10,15 @@
         .header h1 { font-size: 18px; }
         .header p { font-size: 12px; opacity: 0.8; margin-top: 4px; }
         .main { flex: 1; display: flex; overflow: hidden; }
-        .sidebar { width: 240px; background: white; border-right: 1px solid #e0e0e0; padding: 16px; }
+        .sidebar { width: 240px; background: white; border-right: 1px solid #e0e0e0; padding: 16px; display: flex; flex-direction: column; }
         .sidebar button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 16px; }
+        .conv-list { flex: 1; overflow-y: auto; }
+        .conv-item { padding: 10px 12px; border-radius: 6px; margin-bottom: 6px; cursor: pointer; font-size: 13px; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s; }
+        .conv-item:hover { background: #f0f4ff; }
+        .conv-item.active { background: #e8f0fe; color: #1a73e8; font-weight: 500; }
+        .conv-item .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .conv-item .conv-del { color: #999; font-size: 14px; padding: 0 4px; }
+        .conv-item .conv-del:hover { color: #ea4335; }
         .chat-area { flex: 1; display: flex; flex-direction: column; }
         .messages { flex: 1; overflow-y: auto; padding: 24px; }
         .msg { margin-bottom: 16px; max-width: 80%; }
@@ -41,8 +48,9 @@
     <div class="main">
         <div class="sidebar">
             <button onclick="newConversation()">+ 新建对话</button>
-            <div style="font-size:12px;color:#999;">
-                <p>当前对话 ID: <span id="convId">-</span></p>
+            <div class="conv-list" id="convList">
+                <!-- 历史对话会被 JS 动态渲染在这里 -->
+                <div style="text-align:center;color:#999;font-size:12px;padding:20px 0;">加载中...</div>
             </div>
         </div>
         <div class="chat-area">
@@ -63,6 +71,70 @@
     <script>
         let currentConvId = null;
 
+        // 页面加载时：拉历史对话列表 + 默认打开第一个
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadConversations();
+        });
+
+        /**
+         * 拉取所有历史对话 → 渲染侧边栏列表
+         */
+        async function loadConversations() {
+            const res = await fetch('/api/conversation');
+            const convs = await res.json();
+            const list = document.getElementById('convList');
+
+            if (convs.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:#999;font-size:12px;padding:20px 0;">暂无对话</div>';
+                return;
+            }
+
+            list.innerHTML = convs.map(c => `
+                <div class="conv-item ${c.id === currentConvId ? 'active' : ''}" data-id="${c.id}" onclick="selectConversation(${c.id})">
+                    <span class="conv-title">${c.title || '未命名对话'}</span>
+                    <span class="conv-del" onclick="event.stopPropagation(); deleteConversation(${c.id})" title="删除">🗑</span>
+                </div>
+            `).join('');
+        }
+
+        /**
+         * 点击侧边栏某个历史对话 → 切换过去，加载它的消息
+         */
+        async function selectConversation(id) {
+            currentConvId = id;
+            // 拉这个对话的历史消息（后端直接返回 List<Message>）
+            const res = await fetch(`/api/conversation/${id}/history`);
+            const messages = await res.json();
+
+            const box = document.getElementById('messages');
+            box.innerHTML = '';
+            messages.forEach(msg => {
+                addMessage(msg.role, msg.content);
+            });
+
+            // 更新列表高亮（用 data-id 精准匹配）
+            document.querySelectorAll('.conv-item').forEach(el => {
+                el.classList.toggle('active', el.getAttribute('data-id') == id);
+            });
+        }
+
+        /**
+         * 删除历史对话（级联删消息 + 校验结果）
+         */
+        async function deleteConversation(id) {
+            if (!confirm('确定要删除这个对话吗？')) return;
+            await fetch(`/api/conversation/${id}`, { method: 'DELETE' });
+
+            // 如果删的是当前对话，清空 chat area
+            if (currentConvId === id) {
+                currentConvId = null;
+                document.getElementById('messages').innerHTML =
+                    '<div style="text-align:center;color:#999;padding:40px;">对话已删除。点击 + 新建对话 开始新的提问。</div>';
+            }
+            // 刷新列表
+            await loadConversations();
+        }
+
         async function newConversation() {
             const res = await fetch('/api/conversation', {
                 method: 'POST',
@@ -71,8 +143,8 @@
             });
             const conv = await res.json();
             currentConvId = conv.id;
-            document.getElementById('convId').textContent = conv.id;
             document.getElementById('messages').innerHTML = '';
+            await loadConversations();   // 新建完刷新侧边栏列表
         }
 
         /**
